@@ -1,6 +1,6 @@
 {
   "name": "wabot",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "Bot WhatsApp complet - Baileys (corrigé pour XHRIS Host)",
   "main": "src/index.js",
   "scripts": {
@@ -13,7 +13,7 @@
     "dotenv": "^16.0.0",
     "form-data": "^4.0.0",
     "fs-extra": "^11.1.0",
-    "jimp": "^0.22.10",
+    "jimp": "^1.6.0",
     "mathjs": "^12.4.1",
     "node-cron": "^3.0.3",
     "pdfkit": "^0.15.0",
