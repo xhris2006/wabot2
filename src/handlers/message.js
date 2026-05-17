@@ -23,6 +23,37 @@ const { normalizeJid, isAdmin }  = require('../lib/utils')
 // ─── Regex liens ─────────────────────────────────────────────────────────────
 const LINK_REGEX = /(https?:\/\/|www\.|chat\.whatsapp\.com)[^\s]*/i
 
+// ─── Déduplication anti-spam ─────────────────────────────────────────────────
+const _processedMessages = new Map() // { messageId: timestamp }
+const DEDUPE_TTL_MS = 60_000
+
+function isAlreadyProcessed(messageId) {
+  if (!messageId) return false
+  const now = Date.now()
+  if (_processedMessages.size > 200) {
+    for (const [k, t] of _processedMessages.entries()) {
+      if (now - t > DEDUPE_TTL_MS) _processedMessages.delete(k)
+    }
+  }
+  if (_processedMessages.has(messageId)) return true
+  _processedMessages.set(messageId, now)
+  return false
+}
+
+const _recentReplies = new Map() // { jid_textHash: timestamp }
+function isSimilarReplyRecent(chatJid, text) {
+  const key = chatJid + '_' + String(text).slice(0, 100)
+  const now = Date.now()
+  if (_recentReplies.size > 500) {
+    for (const [k, t] of _recentReplies.entries()) {
+      if (now - t > 30000) _recentReplies.delete(k)
+    }
+  }
+  if (_recentReplies.has(key) && now - _recentReplies.get(key) < 5000) return true
+  _recentReplies.set(key, now)
+  return false
+}
+
 // ─── Chargement nouvelles commandes (commands/) ───────────────────────────────
 let _newCommands = null
 function getNewCommands() {
@@ -244,6 +275,8 @@ function isAdminFlex(participants, jid, sock) {
 // ─── HANDLER PRINCIPAL ────────────────────────────────────────────────────────
 const handleMessage = async (sock, msg) => {
   if (!msg.message) return
+  // ⚠️ DÉDUPLICATION : évite le spam si Baileys émet 2× le même message
+  if (isAlreadyProcessed(msg.key?.id)) return
 
   const remoteJid = msg.key.remoteJid
   const isGroup   = remoteJid.endsWith('@g.us')
@@ -465,6 +498,37 @@ const handleMessage = async (sock, msg) => {
     saveDB(db)
   } catch {}
 
+  // ── Détection AFK ────────────────────────────────────────────────────────
+  if (isGroup) {
+    try {
+      const dbAfk = loadDB()
+      if (dbAfk.afk && Object.keys(dbAfk.afk).length) {
+        const mentions = msg.message?.extendedTextMessage?.contextInfo?.mentionedJid || []
+        for (const m of mentions) {
+          const mNum = m.split(':')[0].split('@')[0].replace(/[^0-9]/g, '')
+          const afkData = dbAfk.afk[mNum]
+          if (afkData) {
+            const sinceMin = Math.floor((Date.now() - afkData.since) / 60000)
+            await sock.sendMessage(remoteJid, {
+              text:     `💤 @${mNum} est *AFK* depuis ${sinceMin} min\n📝 _${afkData.reason}_`,
+              mentions: [m]
+            }, { quoted: msg })
+          }
+        }
+        // Si le sender lui-même était AFK → le retirer automatiquement
+        const senderNum = sender.split(':')[0].split('@')[0].replace(/[^0-9]/g, '')
+        if (dbAfk.afk[senderNum] && text && !text.startsWith(prefix || '.')) {
+          delete dbAfk.afk[senderNum]
+          saveDB(dbAfk)
+          await sock.sendMessage(remoteJid, {
+            text:     `🎉 @${senderNum} est de retour !`,
+            mentions: [sender]
+          })
+        }
+      }
+    } catch {}
+  }
+
   // ── Mode privé du bot : seuls owner + sudo peuvent exécuter des commandes ─
   if (config.botMode === 'private' && !ownerCheck && !sudoCheck) return
 
@@ -665,4 +729,4 @@ async function runNewCommand(sock, msg, cmd, cmdName, args, ctx) {
   saveDB(db)
 }
 
-module.exports = { handleMessage, invalidateGroupCache, getNewCommands }
+module.exports = { handleMessage, invalidateGroupCache, getNewCommands, isSimilarReplyRecent }

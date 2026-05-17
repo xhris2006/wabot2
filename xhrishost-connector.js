@@ -13,11 +13,46 @@
 
 'use strict';
 
+const fs   = require('fs');
+const path = require('path');
+
 const API_BASE  = process.env.XHRIS_API_URL || 'https://api.xhrishost.site/api';
 const SITE_URL  = (process.env.XHRIS_SITE_URL || 'https://xhrishost.site').replace(/\/$/, '');
 
+// ── Persistance des sessions sur disque ──────────────────────────────────────
+const SESSIONS_FILE = path.join(process.cwd(), 'data', 'xhris-sessions.json');
+
+function loadSessionsFromDisk() {
+  try {
+    const dir = path.dirname(SESSIONS_FILE);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    if (fs.existsSync(SESSIONS_FILE)) {
+      const data = JSON.parse(fs.readFileSync(SESSIONS_FILE, 'utf8'));
+      const map = new Map();
+      for (const [jid, s] of Object.entries(data)) {
+        map.set(jid, { ...s, connectedAt: new Date(s.connectedAt) });
+      }
+      console.log(`[XHRIS HOST] ${map.size} session(s) restaurée(s) depuis le disque`);
+      return map;
+    }
+  } catch (e) {
+    console.error('[XHRIS HOST] Erreur load sessions:', e.message);
+  }
+  return new Map();
+}
+
+function persistSessions() {
+  try {
+    const obj = {};
+    for (const [jid, s] of sessions.entries()) obj[jid] = s;
+    fs.writeFileSync(SESSIONS_FILE, JSON.stringify(obj, null, 2));
+  } catch (e) {
+    console.error('[XHRIS HOST] Erreur save sessions:', e.message);
+  }
+}
+
 // Per-JID session store: { [jid]: { apiKey, user, connectedAt } }
-const sessions = new Map();
+const sessions = loadSessionsFromDisk();
 
 // Pending verification: { [jid]: requestId }
 const awaitingCode = new Map();
@@ -49,6 +84,7 @@ async function onBotStart(sock, ownerJid) {
     const res = await apiCall('/users/me', 'GET', null, envKey);
     if (res.success) {
       sessions.set(ownerJid, { apiKey: envKey, user: res.data, connectedAt: new Date() });
+      persistSessions();
       const deployType = process.env.XHRIS_DEPLOY_TYPE || 'upload';
       await sock.sendMessage(ownerJid, {
         text:
@@ -145,6 +181,7 @@ async function handleCommand(sock, msg) {
     if (res.success) {
       const { apiKey, user } = res.data;
       sessions.set(jid, { apiKey, user, connectedAt: new Date() });
+      persistSessions();
       await sock.sendMessage(jid, {
         text:
           '✅ *Connexion réussie !*\n\n' +
@@ -219,6 +256,7 @@ async function handleCommand(sock, msg) {
   // ── .deconnexion ─────────────────────────────────────────────────────────
   if (trimmed === '.deconnexion') {
     sessions.delete(jid);
+    persistSessions();
     awaitingTransferConfirm.delete(jid);
     await sock.sendMessage(jid, { text: '👋 Déconnecté. Tapez *.xhrishost* pour vous reconnecter.' });
     return true;
@@ -258,16 +296,29 @@ async function handleCommand(sock, msg) {
 
   // ── .id / .my-id / .monid — Affiche votre ID XHRIS ─────────────────────
   if (trimmed === '.id' || trimmed === '.my-id' || trimmed === '.monid' || trimmed === '.myid') {
-    await sock.sendMessage(jid, {
-      text:
-        '🆔 *Votre ID XHRIS Host*\n\n' +
-        '```' + session.user.id + '```\n\n' +
-        '📋 Donnez cet ID à un autre utilisateur pour qu\'il vous envoie\n' +
-        'des coins avec la commande :\n' +
-        '*.transfert ' + session.user.id + ' <montant>*\n\n' +
-        '👤 ' + session.user.name + '\n' +
-        '📧 ' + (session.user.email || '—'),
-    });
+    try {
+      const res = await apiCall('/users/me', 'GET', null, key);
+      const u = res.success ? res.data : session.user;
+      // Mettre à jour la session locale avec les données fraîches
+      if (res.success) {
+        session.user = u;
+        sessions.set(jid, session);
+        persistSessions();
+      }
+      await sock.sendMessage(jid, {
+        text:
+          '🆔 *Votre ID XHRIS Host*\n\n' +
+          '```' + u.id + '```\n\n' +
+          '📋 Copiez cet ID (appui long → copier).\n' +
+          '_Cet ID sert à recevoir des coins via :_\n' +
+          '*.transfert ' + u.id + ' <montant>*\n\n' +
+          '👤 ' + u.name + '\n' +
+          '📧 ' + (u.email || '—') + '\n' +
+          '💰 ' + (u.coins || 0) + ' coins',
+      });
+    } catch (e) {
+      await sock.sendMessage(jid, { text: '❌ Erreur: ' + e.message });
+    }
     return true;
   }
 

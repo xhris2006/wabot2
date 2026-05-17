@@ -38,15 +38,14 @@ module.exports = [
     usage: '.dev',
     handler: async (sock, msg, { reply }) => {
       await reply(
-        `👨‍💻 *Développeur du Bot*\n` +
-        `━━━━━━━━━━━━━━━━━━━━\n` +
-        `📱 Numéro : *+237694600007*\n` +
-        `🌐 Portfolio : https://xhris84.netlify.app\n` +
-        `📦 GitHub : https://github.com/xhris84\n\n` +
-        `🚀 *Projets*\n` +
-        `• 🤖 WhatsApp Bot (Baileys MD)\n` +
-        `• 🌐 Portfolio Web\n` +
-        `• 💾 Autres projets sur GitHub`
+        `👨‍💻 *Développeur — XHRIS-MD*\n` +
+        `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+        `📱 Contact : *+237694600007*\n` +
+        `🌐 Site : https://xhrishost.site\n` +
+        `📦 GitHub : https://github.com/xhris2006\n` +
+        `📢 Chaîne WA : https://whatsapp.com/channel/0029Vark1I1AYlUR1G8YMX31\n\n` +
+        `🚀 *XHRIS Host* — Hébergement de bots WhatsApp\n` +
+        `Déploie ton bot en 1 clic depuis le Marketplace !`
       )
     }
   },

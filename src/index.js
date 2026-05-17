@@ -235,6 +235,7 @@ const msgRetryCounterCache = {
   flushAll ()      { this._data.clear() }
 }
 const msgStore             = new Map()
+global.msgStore            = msgStore   // exposé pour .search
 let   reconnectCount       = 0
 
 // ─── DÉMARRAGE ───────────────────────────────────────────────────────────────
@@ -270,10 +271,17 @@ const startBot = async () => {
   if (OWNER_NUMBER_ENV && !config.ownerNumber) {
     config.ownerNumber = OWNER_NUMBER_ENV
   }
+  if (!config.botName || config.botName === 'MonBot') config.botName = 'XHRIS-MD'
   await saveConfig(config)
   if (OWNER_NUMBER_ENV) {
-    console.log(`[XHRIS] OWNER_NUMBER grave: +${OWNER_NUMBER_ENV}`)
+    console.log(`[XHRIS] OWNER_NUMBER gravé: +${OWNER_NUMBER_ENV}`)
   }
+
+  // ── i18n init ─────────────────────────────────────────────────────────────
+  try {
+    const { setLang } = require('./lib/i18n')
+    setLang(config.lang || 'fr')
+  } catch {}
 
   // ── Session ───────────────────────────────────────────────────────────────
   const loadedFromDB = await loadSessionFromDB()
@@ -620,6 +628,31 @@ const startBot = async () => {
   cron.schedule('0 * * * *', () => {
     cleanTmp().catch(e => console.error('cleanTmp error:', e.message))
   })
+
+  // ─── CRON REMINDERS (toutes les 30s) ────────────────────────────────────
+  setInterval(async () => {
+    try {
+      const { loadDB, saveDB } = require('./lib/db')
+      const db = loadDB()
+      if (!db.reminders?.length) return
+      const now = Date.now()
+      const fired     = db.reminders.filter(r => r.triggerAt <= now)
+      const remaining = db.reminders.filter(r => r.triggerAt >  now)
+      if (!fired.length) return
+      for (const r of fired) {
+        try {
+          await sock.sendMessage(r.chatId, {
+            text:     `🔔 *RAPPEL*\n\n💬 ${r.message}\n\n_Programmé il y a ${Math.floor((now - r.createdAt) / 60000)} min_`,
+            mentions: [r.userId]
+          })
+        } catch (e) {
+          console.error('[Reminder] échec envoi:', e.message)
+        }
+      }
+      db.reminders = remaining
+      saveDB(db)
+    } catch (e) { console.error('[ReminderCron]', e.message) }
+  }, 30000)
 
   return sock
 }

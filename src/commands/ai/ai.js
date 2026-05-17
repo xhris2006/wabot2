@@ -64,24 +64,144 @@ module.exports = [
     name: 'imagine',
     aliases: ['dalle', 'genimg', 'gen'],
     category: 'ai',
-    desc: 'Générer une image avec IA (Pollinations.ai — gratuit)',
+    desc: 'Générer 3 variantes d\'une image (IA, gratuit)',
     usage: '.imagine <description>',
     execute: async ({ sock, msg, from, args }) => {
       if (!args.length) return reply(sock, msg, '❌ Usage: .imagine <description>\nEx: .imagine un chat astronaute')
       await react(sock, msg, '🎨')
       const prompt = args.join(' ')
       try {
-        const seed = Math.floor(Math.random() * 1000000)
-        const imgUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=1024&height=1024&seed=${seed}&nologo=true`
-        const imgRes = await axios.get(imgUrl, { responseType: 'arraybuffer', timeout: 60000 })
-        await sock.sendMessage(from, {
-          image: Buffer.from(imgRes.data),
-          caption: `🎨 *AI Generated*\n_${prompt}_`
-        }, { quoted: msg })
+        const seeds = [Math.floor(Math.random() * 1e6), Math.floor(Math.random() * 1e6), Math.floor(Math.random() * 1e6)]
+        const promises = seeds.map(seed =>
+          axios.get(`https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=1024&height=1024&seed=${seed}&nologo=true`, {
+            responseType: 'arraybuffer',
+            timeout: 60000
+          }).then(r => Buffer.from(r.data)).catch(() => null)
+        )
+        const results = (await Promise.all(promises)).filter(Boolean)
+        if (!results.length) return reply(sock, msg, '❌ Aucune image générée. Réessaie.')
+        for (let i = 0; i < results.length; i++) {
+          await sock.sendMessage(from, {
+            image:   results[i],
+            caption: `🎨 *Variante ${i + 1}/${results.length}*\n_${prompt}_`
+          }, { quoted: msg })
+        }
         await react(sock, msg, '✅')
       } catch (e) {
         await reply(sock, msg, '❌ Erreur génération image: ' + e.message)
       }
+    }
+  },
+
+  // ─── SUMMARIZE ───────────────────────────────────────────────────────────
+  {
+    name: 'summarize',
+    aliases: ['resume', 'tldr'],
+    category: 'ai',
+    desc: 'Résumer un texte (ou message cité)',
+    usage: '.summarize <texte> OU reply + .summarize',
+    execute: async ({ sock, msg, from, args }) => {
+      let text = args.join(' ')
+      if (!text) {
+        const q = msg.message?.extendedTextMessage?.contextInfo?.quotedMessage
+        text = q?.conversation || q?.extendedTextMessage?.text || ''
+      }
+      if (!text || text.length < 50) return reply(sock, msg, '❌ Texte trop court (min 50 caractères).')
+      await react(sock, msg, '🧠')
+      try {
+        const res = await axios.post('https://text.pollinations.ai/openai', {
+          model: 'openai',
+          messages: [
+            { role: 'system', content: 'Tu résumes en français en 3 phrases maximum.' },
+            { role: 'user', content: 'Résume ce texte:\n\n' + text }
+          ]
+        }, { timeout: 30000 })
+        const summary = res.data?.choices?.[0]?.message?.content || String(res.data || '')
+        await reply(sock, msg, `📋 *Résumé*\n\n${summary}`)
+      } catch (e) { reply(sock, msg, '❌ Erreur résumé: ' + e.message) }
+    }
+  },
+
+  // ─── EXPLAIN ─────────────────────────────────────────────────────────────
+  {
+    name: 'explain',
+    aliases: ['explique'],
+    category: 'ai',
+    desc: 'Explique un texte, code ou concept',
+    usage: '.explain <texte> OU reply + .explain',
+    execute: async ({ sock, msg, from, args }) => {
+      let text = args.join(' ')
+      if (!text) {
+        const q = msg.message?.extendedTextMessage?.contextInfo?.quotedMessage
+        text = q?.conversation || q?.extendedTextMessage?.text || ''
+      }
+      if (!text) return reply(sock, msg, '❌ Donne un texte ou réponds à un message.')
+      await react(sock, msg, '🧠')
+      try {
+        const res = await axios.post('https://text.pollinations.ai/openai', {
+          model: 'openai',
+          messages: [
+            { role: 'system', content: 'Tu expliques en français simplement, comme à un débutant.' },
+            { role: 'user', content: 'Explique-moi:\n\n' + text }
+          ]
+        }, { timeout: 30000 })
+        const ans = res.data?.choices?.[0]?.message?.content || String(res.data || '')
+        await reply(sock, msg, `💡 *Explication*\n\n${ans}`)
+      } catch (e) { reply(sock, msg, '❌ Erreur: ' + e.message) }
+    }
+  },
+
+  // ─── FIXCODE ─────────────────────────────────────────────────────────────
+  {
+    name: 'fixcode',
+    aliases: ['debug'],
+    category: 'ai',
+    desc: 'Trouve et corrige les bugs d\'un code',
+    usage: '.fixcode <code> OU reply + .fixcode',
+    execute: async ({ sock, msg, from, args }) => {
+      let code = args.join(' ')
+      if (!code) {
+        const q = msg.message?.extendedTextMessage?.contextInfo?.quotedMessage
+        code = q?.conversation || q?.extendedTextMessage?.text || ''
+      }
+      if (!code) return reply(sock, msg, '❌ Donne du code ou réponds à un message.')
+      await react(sock, msg, '🐛')
+      try {
+        const res = await axios.post('https://text.pollinations.ai/openai', {
+          model: 'openai',
+          messages: [
+            { role: 'system', content: 'Tu es un expert dev. Trouve les bugs et donne le code corrigé en français.' },
+            { role: 'user', content: 'Trouve et corrige les bugs:\n\n```\n' + code + '\n```' }
+          ]
+        }, { timeout: 45000 })
+        const ans = res.data?.choices?.[0]?.message?.content || String(res.data || '')
+        await reply(sock, msg, `🛠️ *Correction*\n\n${ans}`)
+      } catch (e) { reply(sock, msg, '❌ Erreur: ' + e.message) }
+    }
+  },
+
+  // ─── DETECT (langue) ─────────────────────────────────────────────────────
+  {
+    name: 'detect',
+    aliases: ['detectlang'],
+    category: 'ai',
+    desc: 'Détecte la langue d\'un texte',
+    usage: '.detect <texte> OU reply + .detect',
+    execute: async ({ sock, msg, from, args }) => {
+      let text = args.join(' ')
+      if (!text) {
+        const q = msg.message?.extendedTextMessage?.contextInfo?.quotedMessage
+        text = q?.conversation || q?.extendedTextMessage?.text || ''
+      }
+      if (!text) return reply(sock, msg, '❌ Donne un texte.')
+      try {
+        const res = await axios.get(
+          `https://api.mymemory.translated.net/get?q=${encodeURIComponent(text.slice(0, 200))}&langpair=auto|en`,
+          { timeout: 10000 }
+        )
+        const detected = res.data?.responseData?.detectedLanguage || res.data?.matches?.[0]?.source || 'inconnu'
+        await reply(sock, msg, `🌍 *Langue détectée :* \`${detected}\``)
+      } catch (e) { reply(sock, msg, '❌ Erreur: ' + e.message) }
     }
   },
 

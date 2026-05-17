@@ -218,7 +218,8 @@ module.exports = [
 
       try {
         await sock.sendMessage(from, { delete: key })
-        await react(sock, msg, '✅')
+        // Supprimer aussi le message de commande pour plus de propreté
+        try { await sock.sendMessage(from, { delete: msg.key }) } catch {}
       } catch (e) {
         await reply(sock, msg, `❌ Impossible de supprimer: ${e.message}`)
       }

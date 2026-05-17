@@ -411,6 +411,143 @@ module.exports = {
   },
 
   // ════════════════════════════════════════════════════════════════════════════
+  // NOTE — Bloc-notes personnel
+  // ════════════════════════════════════════════════════════════════════════════
+  note: {
+    desc: 'Bloc-notes personnel (save, list, get, del)',
+    aliases: ['notes', 'memo'],
+    category: 'user',
+    usage: '.note save <texte> | .note list | .note get <id> | .note del <id>',
+    handler: async (sock, msg, { args, reply, sender, db }) => {
+      if (!args.length) return reply('❌ Usage:\n.note save <texte>\n.note list\n.note get <id>\n.note del <id>')
+      const action = args.shift().toLowerCase()
+      const userId = sender.split(':')[0].split('@')[0]
+      if (!db.notes) db.notes = {}
+      if (!db.notes[userId]) db.notes[userId] = []
+      if (action === 'save') {
+        const text = args.join(' ').trim()
+        if (!text) return reply('❌ Texte vide.')
+        const id = Date.now().toString(36)
+        db.notes[userId].push({ id, text, at: Date.now() })
+        await reply(`📝 *Note sauvegardée* — ID: \`${id}\``)
+      } else if (action === 'list') {
+        const list = db.notes[userId]
+        if (!list.length) return reply('📒 Aucune note.')
+        const txt = list.slice(-20).map((n, i) => `${i + 1}. [${n.id}] ${n.text.slice(0, 60)}`).join('\n')
+        await reply(`📒 *Tes notes (${list.length})*\n\n${txt}`)
+      } else if (action === 'get') {
+        const n = db.notes[userId].find(x => x.id === args[0])
+        if (!n) return reply('❌ ID introuvable.')
+        await reply(`📝 *Note ${args[0]}*\n\n${n.text}`)
+      } else if (action === 'del') {
+        const before = db.notes[userId].length
+        db.notes[userId] = db.notes[userId].filter(n => n.id !== args[0])
+        if (db.notes[userId].length === before) return reply('❌ ID introuvable.')
+        await reply(`✅ Note supprimée.`)
+      } else { reply('❌ save | list | get | del') }
+    }
+  },
+
+  // ════════════════════════════════════════════════════════════════════════════
+  // TODO — Liste de tâches
+  // ════════════════════════════════════════════════════════════════════════════
+  todo: {
+    desc: 'Liste de tâches personnelle',
+    aliases: ['tasks', 'task'],
+    category: 'user',
+    usage: '.todo add <texte> | .todo list | .todo done <n> | .todo del <n>',
+    handler: async (sock, msg, { args, reply, sender, db }) => {
+      if (!args.length) return reply('❌ Usage:\n.todo add <texte>\n.todo list\n.todo done <n>\n.todo del <n>')
+      const action = args.shift().toLowerCase()
+      const userId = sender.split(':')[0].split('@')[0]
+      if (!db.todos) db.todos = {}
+      if (!db.todos[userId]) db.todos[userId] = []
+      if (action === 'add') {
+        const text = args.join(' ').trim()
+        if (!text) return reply('❌ Texte vide.')
+        const id = String(db.todos[userId].length + 1)
+        db.todos[userId].push({ id, text, done: false, at: Date.now() })
+        await reply(`✅ Tâche *#${id}* ajoutée.`)
+      } else if (action === 'list') {
+        const list = db.todos[userId]
+        if (!list.length) return reply('📋 Aucune tâche.')
+        const txt = list.map(t => `${t.done ? '✅' : '⬜'} *#${t.id}* — ${t.text}`).join('\n')
+        await reply(`📋 *Tes tâches (${list.length})*\n\n${txt}`)
+      } else if (action === 'done') {
+        const t = db.todos[userId].find(x => x.id === args[0])
+        if (!t) return reply('❌ ID introuvable.')
+        t.done = true
+        await reply(`✅ Tâche *#${t.id}* faite.`)
+      } else if (action === 'del') {
+        const before = db.todos[userId].length
+        db.todos[userId] = db.todos[userId].filter(t => t.id !== args[0])
+        if (db.todos[userId].length === before) return reply('❌ ID introuvable.')
+        await reply(`🗑️ Tâche supprimée.`)
+      } else { reply('❌ add | list | done | del') }
+    }
+  },
+
+  // ════════════════════════════════════════════════════════════════════════════
+  // REMIND — Rappel programmé
+  // ════════════════════════════════════════════════════════════════════════════
+  remind: {
+    desc: 'Rappel programmé (30m, 1h, 18:30, 2026-12-25)',
+    aliases: ['reminder', 'rappel'],
+    category: 'user',
+    usage: '.remind <durée|heure> <message>',
+    handler: async (sock, msg, { args, reply, sender, db }) => {
+      if (args.length < 2) return reply('❌ Usage:\n.remind 30m Boire de l\'eau\n.remind 1h Appeler\n.remind 18:30 Réunion\n.remind 2026-12-25 Noël')
+      const when    = args.shift()
+      const message = args.join(' ')
+      let triggerAt = 0
+      const relMatch  = when.match(/^(\d+)\s*([smhdSMHD])$/)
+      const timeMatch = when.match(/^(\d{1,2}):(\d{2})$/)
+      const dateMatch = when.match(/^(\d{4})-(\d{2})-(\d{2})$/)
+      if (relMatch) {
+        const v = parseInt(relMatch[1])
+        const u = relMatch[2].toLowerCase()
+        triggerAt = Date.now() + (u==='d'?v*86400000:u==='h'?v*3600000:u==='m'?v*60000:v*1000)
+      } else if (timeMatch) {
+        const t = new Date()
+        t.setHours(parseInt(timeMatch[1]), parseInt(timeMatch[2]), 0, 0)
+        if (t.getTime() <= Date.now()) t.setDate(t.getDate() + 1)
+        triggerAt = t.getTime()
+      } else if (dateMatch) {
+        triggerAt = new Date(when + 'T09:00:00').getTime()
+      } else {
+        return reply('❌ Format invalide. Ex: 30m | 1h | 18:30 | 2026-12-25')
+      }
+      if (triggerAt <= Date.now()) return reply('❌ Date dans le passé.')
+      if (triggerAt - Date.now() > 30 * 86400000) return reply('❌ Maximum 30 jours.')
+      if (!db.reminders) db.reminders = []
+      const reminder = { id: Date.now().toString(36), userId: sender, chatId: msg.key.remoteJid, message, triggerAt, createdAt: Date.now() }
+      db.reminders.push(reminder)
+      await reply(`🔔 *Rappel programmé*\n\n📅 ${new Date(triggerAt).toLocaleString('fr-FR')}\n💬 _${message}_`)
+    }
+  },
+
+  // ════════════════════════════════════════════════════════════════════════════
+  // AFK — Mode absent
+  // ════════════════════════════════════════════════════════════════════════════
+  afk: {
+    desc: 'Mode absent — répond aux mentions pendant ton absence',
+    aliases: ['absent'],
+    category: 'user',
+    usage: '.afk <raison> | .afk off',
+    handler: async (sock, msg, { args, reply, sender, db }) => {
+      const userId = sender.split(':')[0].split('@')[0]
+      if (!db.afk) db.afk = {}
+      if (args[0]?.toLowerCase() === 'off') {
+        delete db.afk[userId]
+        return reply('✅ Mode AFK désactivé. Bon retour !')
+      }
+      const reason = args.join(' ') || 'Indisponible'
+      db.afk[userId] = { reason, since: Date.now() }
+      await reply(`💤 *Mode AFK activé*\n\nRaison: _${reason}_\n\nTape *.afk off* à ton retour.`)
+    }
+  },
+
+  // ════════════════════════════════════════════════════════════════════════════
   // WEBSCAN — Analyser une URL
   // ════════════════════════════════════════════════════════════════════════════
   webscan: {

@@ -345,23 +345,37 @@ module.exports = [
       const senderNum = sender.split(':')[0].split('@')[0].replace(/[^0-9]/g, '')
       const botNum    = sock.user?.id?.split(':')[0].split('@')[0].replace(/[^0-9]/g, '') || ''
 
-      const adminsToDemote = participants
-        .filter(p => p.admin === 'admin' || p.admin === 'superadmin')
-        .filter(p => {
-          const pNum = p.id.split(':')[0].split('@')[0].replace(/[^0-9]/g, '')
-          return pNum !== senderNum && pNum !== botNum
-        })
-        .map(p => p.id)
+      const admins = participants.filter(p => p.admin === 'admin' || p.admin === 'superadmin')
+      const targets = admins.filter(p => {
+        const pNum = p.id.split(':')[0].split('@')[0].replace(/[^0-9]/g, '')
+        return pNum !== senderNum && pNum !== botNum
+      })
 
-      if (!adminsToDemote.length) return reply(sock, msg, 'ℹ️ Aucun autre admin à démettre.')
+      if (!targets.length) return reply(sock, msg, 'ℹ️ Aucun autre admin à démettre.')
 
-      try {
-        await reply(sock, msg, `⚠️ Démission de ${adminsToDemote.length} admin(s) en cours...`)
-        await sock.groupParticipantsUpdate(from, adminsToDemote, 'demote')
-        await reply(sock, msg, `✅ ${adminsToDemote.length} admin(s) démis. Tu es maintenant le seul admin avec le bot.`)
-      } catch (e) {
-        await reply(sock, msg, `❌ Erreur takeover: ${e.message}\n_Le bot doit être admin et peut échouer sur le créateur originel._`)
+      await reply(sock, msg, `⚠️ Démission de ${targets.length} admin(s) en cours...`)
+
+      let demoted = 0
+      let superadminFailed = false
+      const failedNums = []
+
+      for (const t of targets) {
+        try {
+          await sock.groupParticipantsUpdate(from, [t.id], 'demote')
+          demoted++
+        } catch (e) {
+          const num = t.id.split(':')[0].split('@')[0].replace(/[^0-9]/g, '')
+          failedNums.push('+' + num)
+          if (t.admin === 'superadmin') superadminFailed = true
+        }
       }
+
+      let txt = `✅ ${demoted}/${targets.length} admin(s) démis.`
+      if (failedNums.length) txt += `\n\n❌ Échec sur : ${failedNums.join(', ')}`
+      if (superadminFailed) {
+        txt += `\n\n⚠️ *Le créateur du groupe ne peut pas être démis* (protection WhatsApp).\n💡 Utilise *.clone* pour créer un nouveau groupe dont TU es le créateur.`
+      }
+      await reply(sock, msg, txt)
     }
   },
 
@@ -632,6 +646,155 @@ module.exports = [
     execute: async ({ sock, msg, from }) => {
       await reply(sock, msg, '👋 Au revoir !')
       await sock.groupLeave(from)
+    }
+  },
+
+  // ─── TAG — Mention silencieuse ────────────────────────────────────────────
+  {
+    name: 'tag',
+    aliases: ['hidetag', 'silent'],
+    category: 'group',
+    desc: 'Mentionne tout le monde avec un texte ou message cité',
+    usage: '.tag [texte] OU reply + .tag',
+    group: true, admin: true,
+    execute: async ({ sock, msg, from, args, participants, quoted }) => {
+      const mentions = participants.map(p => p.id)
+
+      // Cas 1 : reply à un message
+      if (quoted) {
+        const m = quoted.message
+        const text = m?.conversation || m?.extendedTextMessage?.text || ''
+        if (text) {
+          await sock.sendMessage(from, { text, mentions })
+        } else if (m?.imageMessage) {
+          const { downloadMediaMessage } = require('@whiskeysockets/baileys')
+          const buf = await downloadMediaMessage(quoted, 'buffer', {}, { logger: { info: () => {}, error: () => {} } })
+          await sock.sendMessage(from, { image: buf, caption: m.imageMessage.caption || '', mentions })
+        } else if (m?.videoMessage) {
+          const { downloadMediaMessage } = require('@whiskeysockets/baileys')
+          const buf = await downloadMediaMessage(quoted, 'buffer', {}, { logger: { info: () => {}, error: () => {} } })
+          await sock.sendMessage(from, { video: buf, caption: m.videoMessage.caption || '', mentions })
+        } else {
+          await sock.sendMessage(from, { text: '📣', mentions })
+        }
+        return
+      }
+
+      // Cas 2 : texte passé en args
+      const text = args.join(' ') || '📣 Attention tout le monde !'
+      await sock.sendMessage(from, { text, mentions })
+    }
+  },
+
+  // ─── RESEND — Renvoyer un message cité ────────────────────────────────────
+  {
+    name: 'resend',
+    aliases: ['repost'],
+    category: 'group',
+    desc: 'Renvoyer un message cité (reply)',
+    usage: '.resend (reply)',
+    execute: async ({ sock, msg, from, quoted }) => {
+      if (!quoted?.message) return reply(sock, msg, '❌ Réponds à un message à renvoyer.')
+      try {
+        const m      = quoted.message
+        const target = from
+        const { downloadMediaMessage } = require('@whiskeysockets/baileys')
+        const dlOpts = { logger: { info: () => {}, error: () => {} } }
+        if (m.conversation || m.extendedTextMessage) {
+          await sock.sendMessage(target, { text: m.conversation || m.extendedTextMessage.text })
+        } else if (m.imageMessage) {
+          const buf = await downloadMediaMessage(quoted, 'buffer', {}, dlOpts)
+          await sock.sendMessage(target, { image: buf, caption: m.imageMessage.caption || '' })
+        } else if (m.videoMessage) {
+          const buf = await downloadMediaMessage(quoted, 'buffer', {}, dlOpts)
+          await sock.sendMessage(target, { video: buf, caption: m.videoMessage.caption || '' })
+        } else if (m.audioMessage) {
+          const buf = await downloadMediaMessage(quoted, 'buffer', {}, dlOpts)
+          await sock.sendMessage(target, { audio: buf, mimetype: 'audio/mp4' })
+        } else if (m.stickerMessage) {
+          const buf = await downloadMediaMessage(quoted, 'buffer', {}, dlOpts)
+          await sock.sendMessage(target, { sticker: buf })
+        } else {
+          reply(sock, msg, '❌ Type de message non supporté pour .resend.')
+        }
+      } catch (e) { reply(sock, msg, '❌ Erreur: ' + e.message) }
+    }
+  },
+
+  // ─── KICKALL ─────────────────────────────────────────────────────────────
+  {
+    name: 'kickall',
+    aliases: ['cleanall', 'purgeall'],
+    category: 'group',
+    desc: 'KICK tout le monde sauf toi et le propriétaire',
+    usage: '.kickall',
+    group: true, botAdmin: true,
+    execute: async ({ sock, msg, from, sender, isOwner, isSudo, participants }) => {
+      if (!isOwner && !isSudo) return reply(sock, msg, '👑 Seul le propriétaire peut utiliser .kickall.')
+      const senderNum  = sender.split(':')[0].split('@')[0].replace(/[^0-9]/g, '')
+      const botNum     = sock.user?.id?.split(':')[0].split('@')[0].replace(/[^0-9]/g, '') || ''
+      const envOwner   = (process.env.OWNER_NUMBER || '').replace(/[^0-9]/g, '')
+      const protected_ = [senderNum, botNum, envOwner].filter(Boolean)
+      const targets    = participants.filter(p => {
+        const pNum = p.id.split(':')[0].split('@')[0].replace(/[^0-9]/g, '')
+        return pNum && !protected_.includes(pNum)
+      }).map(p => p.id)
+      if (!targets.length) return reply(sock, msg, 'ℹ️ Aucune cible.')
+      await reply(sock, msg, `🚪 *KICKALL — ${targets.length} membres*\n\nKick par lots de 5...`)
+      let kicked = 0, failed = 0
+      for (let i = 0; i < targets.length; i += 5) {
+        const batch = targets.slice(i, i + 5)
+        try { await sock.groupParticipantsUpdate(from, batch, 'remove'); kicked += batch.length }
+        catch { failed += batch.length }
+        await new Promise(r => setTimeout(r, 1500))
+      }
+      await reply(sock, msg,
+        `✅ *KICKALL TERMINÉ*\n\n🚪 Expulsés: ${kicked}/${targets.length}` +
+        (failed ? `\n❌ Échecs: ${failed}` : '') +
+        `\n\n_Le bot doit être admin. Le créateur (superadmin) ne peut être kick._`
+      )
+    }
+  },
+
+  // ─── KICKALL2 — DEMOTE puis KICK ─────────────────────────────────────────
+  {
+    name: 'kickall2',
+    aliases: ['demotekick', 'forcedclean'],
+    category: 'group',
+    desc: 'DEMOTE tous les admins puis KICK tout le monde',
+    usage: '.kickall2',
+    group: true, botAdmin: true,
+    execute: async ({ sock, msg, from, sender, isOwner, isSudo, participants }) => {
+      if (!isOwner && !isSudo) return reply(sock, msg, '👑 Seul le propriétaire peut utiliser .kickall2.')
+      const senderNum  = sender.split(':')[0].split('@')[0].replace(/[^0-9]/g, '')
+      const botNum     = sock.user?.id?.split(':')[0].split('@')[0].replace(/[^0-9]/g, '') || ''
+      const envOwner   = (process.env.OWNER_NUMBER || '').replace(/[^0-9]/g, '')
+      const protected_ = [senderNum, botNum, envOwner].filter(Boolean)
+      const targets    = participants.filter(p => {
+        const pNum = p.id.split(':')[0].split('@')[0].replace(/[^0-9]/g, '')
+        return pNum && !protected_.includes(pNum)
+      }).map(p => p.id)
+      if (!targets.length) return reply(sock, msg, 'ℹ️ Aucune cible.')
+      await reply(sock, msg, `⚠️ *KICKALL2 INITIÉ* — ${targets.length} membres\n\nÉtape 1/2: démission des admins...`)
+      const admins = participants.filter(p => (p.admin === 'admin' || p.admin === 'superadmin') && targets.includes(p.id))
+      let demoted = 0, superadminFailed = false
+      for (const a of admins) {
+        try { await sock.groupParticipantsUpdate(from, [a.id], 'demote'); demoted++ }
+        catch { if (a.admin === 'superadmin') superadminFailed = true }
+        await new Promise(r => setTimeout(r, 300))
+      }
+      await reply(sock, msg, `Étape 2/2: kick de ${targets.length} membres...`)
+      let kicked = 0, kickFailed = 0
+      for (let i = 0; i < targets.length; i += 5) {
+        const batch = targets.slice(i, i + 5)
+        try { await sock.groupParticipantsUpdate(from, batch, 'remove'); kicked += batch.length }
+        catch { kickFailed += batch.length }
+        await new Promise(r => setTimeout(r, 1500))
+      }
+      let txt = `✅ *KICKALL2 TERMINÉ*\n\n👑 Démis: ${demoted}/${admins.length}\n🚪 Expulsés: ${kicked}/${targets.length}`
+      if (kickFailed) txt += `\n❌ Échecs kick: ${kickFailed}`
+      if (superadminFailed) txt += `\n\n⚠️ Le créateur du groupe ne peut être démis (protection WhatsApp).\nUtilise *.clone* pour migrer le groupe.`
+      await reply(sock, msg, txt)
     }
   }
 

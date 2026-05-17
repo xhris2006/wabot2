@@ -125,25 +125,15 @@ module.exports = {
 
   // ─── REDÉMARRER ──────────────────────────────────────────────────────────
   restart: {
-    desc: 'Redémarrer le bot',
+    desc: 'Redémarrer le bot (Docker le relancera automatiquement)',
     category: 'owner',
     usage: '.restart',
     ownerOnly: true,
     async handler(sock, msg, { reply }) {
       try {
-        await reply('🔄 Redémarrage en cours...\n\nÀ tout de suite! ⚡')
-        setTimeout(() => {
-          exec('pm2 restart all', (err) => {
-            if (err) {
-              const { spawn } = require('child_process')
-              spawn(process.execPath, process.argv.slice(1), {
-                detached: true,
-                stdio:    'ignore'
-              }).unref()
-            }
-          })
-          process.exit(0)
-        }, 2000)
+        await reply('♻️ *Redémarrage du bot...*\n_Reviens dans 30 secondes._')
+        // ExitCode 2 → Docker restart=on-failure relancera le container
+        setTimeout(() => process.exit(2), 2000)
       } catch (e) {
         reply('❌ Erreur: ' + e.message)
       }
@@ -203,16 +193,17 @@ module.exports = {
           : config.ownerNumber || '?'
 
         let txt = `╔══════════════════════╗\n`
-        txt += `║  ✅  BOT ALIVE!      ║\n`
+        txt += `║  ✅  XHRIS-MD ALIVE! ║\n`
         txt += `╚══════════════════════╝\n\n`
-        txt += `🤖 *Nom:* ${config.botName || 'WhatsApp Bot'}\n`
+        txt += `🤖 *Nom:* ${config.botName || 'XHRIS-MD'}\n`
         txt += `📱 *Numéro:* +${botNum}\n`
         txt += `⚡ *Préfixe:* ${config.prefix || '.'}\n`
         txt += `🟢 *Statut:* En ligne\n`
         txt += `⏱️ *Uptime:* ${day}j ${hr % 24}h ${min % 60}m ${sec % 60}s\n`
         txt += `💾 *RAM:* ${memMB} MB\n`
         txt += `📦 *Node:* ${process.version}\n\n`
-        txt += `_Je suis là et prêt! 🚀_`
+        txt += `🌐 xhrishost.site\n`
+        txt += `📢 https://whatsapp.com/channel/0029Vark1I1AYlUR1G8YMX31`
         reply(txt)
       } catch (e) {
         reply('❌ Erreur: ' + e.message)
@@ -335,28 +326,55 @@ module.exports = {
     usage: '.update',
     ownerOnly: true,
     async handler(sock, msg, { reply }) {
+      const apiKey = process.env.XHRIS_API_KEY
+      const apiUrl = process.env.XHRIS_API_URL || 'https://api.xhrishost.site/api'
+      const botId  = process.env.BOT_ID
+
+      await reply('🔄 *Redéploiement en cours...*\n_Le bot va redémarrer dans quelques secondes._')
+
+      // Méthode 1 : endpoint XHRIS Host
+      if (apiKey && botId) {
+        try {
+          const axios = require('axios')
+          const res = await axios.post(`${apiUrl}/bots/${botId}/redeploy`, {}, {
+            headers: { 'x-api-key': apiKey },
+            timeout: 15000
+          })
+          if (res.data?.success) {
+            await reply('✅ *Redéploiement initié via XHRIS Host*\nLe bot revient dans 1-2 min.')
+            return
+          }
+        } catch (e) {
+          console.log('[update] endpoint redeploy KO:', e.message)
+        }
+      }
+
+      // Méthode 2 : exit process (Docker/PM2 redémarre + re-clone)
+      await reply('⏳ Redémarrage forcé dans 3s...\n_Le repo sera re-cloné automatiquement._')
+      setTimeout(() => process.exit(2), 3000)
+    }
+  },
+
+  // ─── SETLANG ─────────────────────────────────────────────────────────────
+  setlang: {
+    desc: 'Changer la langue du bot (fr/en)',
+    aliases: ['lang', 'language'],
+    category: 'owner',
+    ownerOnly: true,
+    usage: '.setlang fr|en',
+    async handler(sock, msg, { args, reply, config, saveConfig }) {
+      const lang = args[0]?.toLowerCase()
+      if (!['fr', 'en'].includes(lang)) {
+        return reply('❌ Available: fr, en\n❌ Disponibles: fr, en')
+      }
+      config.lang = lang
+      await saveConfig(config)
       try {
-        const apiKey = process.env.XHRIS_API_KEY
-        const apiUrl = process.env.XHRIS_API_URL || 'https://api.xhrishost.site/api'
-        const botId  = process.env.BOT_ID
-
-        if (!apiKey || !botId) {
-          return reply('❌ XHRIS_API_KEY ou BOT_ID non configuré dans l\'env.')
-        }
-
-        await reply('🔄 Lancement du redéploiement...\n_Le bot va redémarrer dans quelques secondes._')
-        const axios = require('axios')
-        const res = await axios.post(`${apiUrl}/bots/${botId}/redeploy`, {}, {
-          headers: { 'x-api-key': apiKey },
-          timeout: 15000
-        })
-        if (res.data?.success) {
-          reply('✅ Redéploiement initié ! Le bot va se reconnecter d\'ici 1-2 minutes.')
-        } else {
-          reply('❌ Erreur: ' + (res.data?.message || 'Réponse inattendue'))
-        }
-      } catch (e) {
-        reply('❌ Erreur de redéploiement: ' + (e.response?.data?.message || e.message))
+        const { setLang, t } = require('../../lib/i18n')
+        setLang(lang)
+        reply(t('lang_changed', { lang: lang.toUpperCase() }))
+      } catch {
+        reply(`✅ Langue changée en *${lang.toUpperCase()}*.`)
       }
     }
   },

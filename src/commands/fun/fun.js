@@ -418,6 +418,32 @@ module.exports = [
     }
   },
 
+  // ─── WALLPAPER ───────────────────────────────────────────────────────────
+  {
+    name: 'wallpaper',
+    aliases: ['wp', 'wallpapers'],
+    category: 'fun',
+    desc: 'Wallpaper aléatoire ou avec prompt (IA)',
+    usage: '.wallpaper [description]',
+    execute: async ({ sock, msg, from, args }) => {
+      await react(sock, msg, '🖼️')
+      try {
+        let prompt = args.join(' ')
+        if (!prompt) {
+          const themes = ['cosmic galaxy nebula', 'tropical beach sunset', 'misty forest mountains', 'cyberpunk neon city', 'abstract geometric art']
+          prompt = themes[Math.floor(Math.random() * themes.length)] + ', high quality wallpaper, 4K, ultra detailed'
+        }
+        const seed = Math.floor(Math.random() * 1e6)
+        const url  = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=1080&height=1920&seed=${seed}&nologo=true`
+        const r    = await axios.get(url, { responseType: 'arraybuffer', timeout: 60000 })
+        await sock.sendMessage(from, {
+          image:   Buffer.from(r.data),
+          caption: `🖼️ _Wallpaper généré_\n${prompt.slice(0, 80)}`
+        }, { quoted: msg })
+      } catch (e) { reply(sock, msg, '❌ Erreur: ' + e.message) }
+    }
+  },
+
   // ─── IMGTEXT ─────────────────────────────────────────────────────────────
   {
     name: 'imgtext',

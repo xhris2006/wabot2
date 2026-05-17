@@ -252,5 +252,93 @@ module.exports = {
         await sock.sendMessage(msg.key.remoteJid, { document: Buffer.from(res.data), mimetype: 'application/zip', fileName }, { quoted: msg })
       } catch (e) { reply('Erreur: ' + e.message) }
     }
+  },
+
+  // ═══ SPOTIFY (cross-search YouTube) ══════════════════════════════════════
+  spotify: {
+    desc: 'Télécharger un morceau Spotify (via YouTube)',
+    aliases: ['sp'],
+    category: 'download',
+    usage: '.spotify <url Spotify ou titre>',
+    handler: async (sock, msg, { args, reply }) => {
+      if (!args.length) return reply('❌ Donne une URL Spotify ou un titre.')
+      await reply('⏳ Recherche Spotify...')
+      try {
+        let query = args.join(' ')
+        if (/spotify\.com/.test(query)) {
+          try {
+            const html = (await axios.get(query, { timeout: 10000, headers: { 'User-Agent': 'Mozilla/5.0' } })).data
+            const title = html.match(/<title>([^<]+)<\/title>/)?.[1] || ''
+            query = title.replace(' | Spotify', '').replace('|', '').trim() || query
+          } catch {}
+        }
+        const sr = await axios.get(`https://apis.davidcyriltech.my.id/youtube/search?query=${encodeURIComponent(query + ' audio')}`, { timeout: 15000 })
+        const vid = sr.data?.results?.[0]
+        if (!vid) return reply('❌ Aucun résultat trouvé pour ce titre.')
+        const dl = await axios.get(`https://apis.davidcyriltech.my.id/youtube/mp3?url=${encodeURIComponent(vid.url)}`, { timeout: 30000 })
+        const dlUrl = dl.data?.download_url || dl.data?.url
+        if (!dlUrl) return reply('❌ Téléchargement impossible. Réessaie.')
+        await sendMediaFromUrl(sock, msg, dlUrl, 'audio')
+        await reply(`🎧 *${vid.title}*\n_Via Spotify → YouTube_`)
+      } catch (e) { reply('❌ Erreur: ' + e.message) }
+    }
+  },
+
+  // ═══ SOUNDCLOUD ═══════════════════════════════════════════════════════════
+  soundcloud: {
+    desc: 'Télécharger piste SoundCloud',
+    aliases: ['sc'],
+    category: 'download',
+    usage: '.soundcloud <url>',
+    handler: async (sock, msg, { args, reply }) => {
+      const url = args[0]
+      if (!url || !/soundcloud\.com/.test(url)) return reply('❌ Lien SoundCloud invalide.')
+      await reply('⏳ SoundCloud...')
+      try {
+        const res = await axios.get(`https://apis.davidcyriltech.my.id/soundcloud?url=${encodeURIComponent(url)}`, { timeout: 30000 })
+        const dl = res.data?.download_url || res.data?.result?.download
+        if (!dl) return reply('❌ Téléchargement impossible. Service indisponible.')
+        await sendMediaFromUrl(sock, msg, dl, 'audio')
+      } catch (e) { reply('❌ Erreur: ' + e.message) }
+    }
+  },
+
+  // ═══ MEDIAFIRE ═══════════════════════════════════════════════════════════
+  mediafire: {
+    desc: 'Télécharger un fichier MediaFire',
+    aliases: ['mf'],
+    category: 'download',
+    usage: '.mediafire <url>',
+    handler: async (sock, msg, { args, reply }) => {
+      const url = args[0]
+      if (!url || !/mediafire/.test(url)) return reply('❌ Lien MediaFire invalide.')
+      await reply('⏳ MediaFire...')
+      try {
+        const html = (await axios.get(url, { timeout: 15000, headers: { 'User-Agent': 'Mozilla/5.0' } })).data
+        const dlLink = html.match(/href="(https:\/\/download[^"]+)"/)?.[1]
+          || html.match(/id="downloadButton"[^>]+href="([^"]+)"/)?.[1]
+        if (!dlLink) return reply('❌ Lien de téléchargement introuvable (fichier privé ou invalide).')
+        await sendMediaFromUrl(sock, msg, dlLink, 'auto')
+      } catch (e) { reply('❌ Erreur: ' + e.message) }
+    }
+  },
+
+  // ═══ GOOGLE DRIVE ════════════════════════════════════════════════════════
+  gdrive: {
+    desc: 'Télécharger un fichier Google Drive public',
+    aliases: ['drive'],
+    category: 'download',
+    usage: '.gdrive <url>',
+    handler: async (sock, msg, { args, reply }) => {
+      const url = args[0]
+      if (!url || !/drive\.google\.com/.test(url)) return reply('❌ Lien Google Drive invalide.')
+      const idMatch = url.match(/[-\w]{25,}/)
+      if (!idMatch) return reply('❌ Impossible d\'extraire l\'ID Drive. Vérifie le lien.')
+      const dlUrl = `https://drive.google.com/uc?export=download&id=${idMatch[0]}`
+      await reply('⏳ Google Drive...')
+      try {
+        await sendMediaFromUrl(sock, msg, dlUrl, 'auto')
+      } catch (e) { reply('❌ Erreur Drive: ' + e.message + '\n_Le fichier doit être public._') }
+    }
   }
 }

@@ -154,11 +154,136 @@ module.exports = {
   },
 
   upscale: {
-    desc: 'Ameliorer la resolution d une image',
+    desc: "Améliorer la résolution d'une image (reply image)",
     aliases: ['enhance', 'hd'],
     category: 'user',
-    handler: async (sock, msg, { reply }) => {
-      return reply('Upscale necessite une cle Replicate/HF. Configure REPLICATE_API_TOKEN ou HF_TOKEN pour activer cette commande.')
+    usage: '.upscale (répondre à une image)',
+    handler: async (sock, msg, { reply, quoted, downloadMedia }) => {
+      const target = targetImage(msg, quoted)
+      if (!target) return reply('❌ Réponds à une image avec .upscale')
+      try {
+        await reply('🔍 _Amélioration en cours..._')
+        const buf = await downloadMedia(target)
+        const FormData = require('form-data')
+        const fd = new FormData()
+        fd.append('image', buf, { filename: 'img.jpg', contentType: 'image/jpeg' })
+        const res = await axios.post('https://api.giftedtech.web.id/api/tools/upscale?apikey=gifted', fd, {
+          headers: { ...fd.getHeaders() },
+          responseType: 'arraybuffer',
+          timeout: 60000
+        }).catch(() => null)
+        if (res?.data && res.data.length > 1000) {
+          await sock.sendMessage(msg.key.remoteJid, { image: Buffer.from(res.data), caption: '🔍 _Image améliorée_' }, { quoted: msg })
+        } else {
+          reply('❌ Service upscale temporairement indisponible. Réessaie dans quelques minutes.')
+        }
+      } catch (e) { reply('❌ Erreur: ' + e.message) }
+    }
+  },
+
+  removebg: {
+    desc: "Enlève le fond d'une image (reply image)",
+    aliases: ['rembg', 'nobg'],
+    category: 'user',
+    usage: '.removebg (répondre à une image)',
+    handler: async (sock, msg, { reply, quoted, downloadMedia }) => {
+      const target = targetImage(msg, quoted)
+      if (!target) return reply('❌ Réponds à une image avec .removebg')
+      try {
+        await reply('🪄 _Suppression du fond..._')
+        const buf = await downloadMedia(target)
+        const FormData = require('form-data')
+        const fd = new FormData()
+        fd.append('image_file', buf, { filename: 'image.jpg', contentType: 'image/jpeg' })
+        const res = await axios.post('https://sdk.photoroom.com/v1/segment', fd, {
+          headers: { ...fd.getHeaders() },
+          responseType: 'arraybuffer',
+          timeout: 30000
+        }).catch(() => null)
+        if (res?.data && res.data.length > 500) {
+          await sock.sendMessage(msg.key.remoteJid, { image: Buffer.from(res.data), caption: '🪄 _Fond supprimé_' }, { quoted: msg })
+        } else {
+          reply('❌ Service remove-bg indisponible. Réessaie ou configure REMOVEBG_KEY dans .env.')
+        }
+      } catch (e) { reply('❌ Erreur: ' + e.message) }
+    }
+  },
+
+  // ═══ TIMER ═══════════════════════════════════════════════════════════════
+  timer: {
+    desc: 'Minuteur — le bot te prévient quand fini',
+    aliases: ['minuteur', 'countdown'],
+    category: 'user',
+    usage: '.timer <durée> [label]  Ex: .timer 5m boil pasta | .timer 1h30m',
+    handler: async (sock, msg, { args, reply, sender }) => {
+      if (!args.length) return reply('❌ Usage: .timer 10m description\nFormats: 30s, 5m, 1h, 2h30m')
+      const raw   = args.shift().toLowerCase()
+      const label = args.join(' ') || 'Timer'
+
+      let totalMs = 0
+      const regex = /(\d+)\s*([smh])/g
+      let m
+      while ((m = regex.exec(raw)) !== null) {
+        const v = parseInt(m[1])
+        const u = m[2]
+        totalMs += u === 'h' ? v * 3600000 : u === 'm' ? v * 60000 : v * 1000
+      }
+      if (totalMs === 0) return reply('❌ Format invalide. Ex: 30s, 5m, 1h30m')
+      if (totalMs > 6 * 3600000) return reply('❌ Maximum 6 heures.')
+
+      const end    = new Date(Date.now() + totalMs)
+      const endStr = end.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })
+      await reply(`⏱️ *Timer lancé*\n\n📝 ${label}\n⏰ Fini à *${endStr}*\n\n_Je te préviens._`)
+      setTimeout(async () => {
+        try {
+          await sock.sendMessage(msg.key.remoteJid, { text: `🔔 *TIMER TERMINÉ*\n\n📝 ${label}`, mentions: [sender] })
+        } catch {}
+      }, totalMs)
+    }
+  },
+
+  // ═══ TTS ═════════════════════════════════════════════════════════════════
+  tts: {
+    desc: 'Texte vers voix audio',
+    aliases: ['voice', 'speak'],
+    category: 'user',
+    usage: '.tts <lang> <texte>  Ex: .tts fr Bonjour',
+    handler: async (sock, msg, { args, reply }) => {
+      if (args.length < 2) return reply('❌ Usage: .tts <lang> <texte>\nEx: .tts fr Bonjour | .tts en Hello')
+      const lang = args.shift()
+      const text = args.join(' ').slice(0, 200)
+      try {
+        const url = `https://translate.google.com/translate_tts?ie=UTF-8&q=${encodeURIComponent(text)}&tl=${lang}&client=tw-ob`
+        const res = await axios.get(url, { responseType: 'arraybuffer', timeout: 15000, headers: { 'User-Agent': 'Mozilla/5.0' } })
+        await sock.sendMessage(msg.key.remoteJid, { audio: Buffer.from(res.data), mimetype: 'audio/mp4', ptt: true }, { quoted: msg })
+      } catch (e) { reply('❌ Erreur TTS: ' + e.message) }
+    }
+  },
+
+  // ═══ STT ═════════════════════════════════════════════════════════════════
+  stt: {
+    desc: 'Transcription audio → texte (reply à un audio)',
+    aliases: ['transcribe', 'voice2text'],
+    category: 'user',
+    usage: '.stt (répondre à un audio)',
+    handler: async (sock, msg, { reply, quoted, downloadMedia }) => {
+      if (!quoted?.message?.audioMessage && !quoted?.message?.videoMessage) {
+        return reply('❌ Réponds à un audio avec .stt')
+      }
+      try {
+        await reply('🎤 _Transcription en cours..._')
+        const buf     = await downloadMedia(quoted)
+        const hfToken = process.env.HF_TOKEN
+        if (!hfToken) return reply('❌ HF_TOKEN non configuré dans .env (gratuit sur huggingface.co).')
+        const res = await axios.post(
+          'https://api-inference.huggingface.co/models/openai/whisper-base',
+          buf,
+          { headers: { 'Authorization': `Bearer ${hfToken}`, 'Content-Type': 'application/octet-stream' }, timeout: 60000 }
+        )
+        const text = res.data?.text
+        if (!text) return reply('❌ Transcription indisponible (API gratuite peut être saturée).')
+        await reply(`📝 *Transcription :*\n\n${text}`)
+      } catch (e) { reply('❌ Erreur STT: ' + e.message) }
     }
   },
 
@@ -167,7 +292,7 @@ module.exports = {
     aliases: ['talkingphoto'],
     category: 'user',
     handler: async (sock, msg, { reply }) => {
-      return reply('Deepfake necessite GPU + cle Replicate. Configure REPLICATE_API_TOKEN pour activer cette commande.')
+      return reply('⚠️ Deepfake nécessite GPU + clé Replicate.\nConfigure REPLICATE_API_TOKEN dans .env pour activer.')
     }
   }
 }

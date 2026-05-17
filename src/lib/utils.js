@@ -77,6 +77,10 @@ const isAdmin = (participants, jid) => {
 
 // ─── reply ────────────────────────────────────────────────────────────────────
 const reply = async (sock, msg, text) => {
+  try {
+    const { isSimilarReplyRecent } = require('../handlers/message')
+    if (isSimilarReplyRecent && isSimilarReplyRecent(msg.key.remoteJid, String(text))) return
+  } catch {}
   return sock.sendMessage(msg.key.remoteJid, { text: String(text) }, { quoted: msg })
 }
 

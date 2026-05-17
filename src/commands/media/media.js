@@ -1,6 +1,50 @@
 const { reply, react } = require('../../lib/utils')
 const axios = require('axios')
 
+// ─── Multi-API fallback helpers ───────────────────────────────────────────────
+async function ytSearch(query) {
+  const apis = [
+    { url: 'https://apis.davidcyriltech.my.id/youtube/search', q: 'query' },
+    { url: 'https://api.dreaded.site/api/ytsearch',            q: 'query' },
+    { url: 'https://api.giftedtech.web.id/api/search/yts',     q: 'query' },
+  ]
+  for (const api of apis) {
+    try {
+      const r = await axios.get(`${api.url}?${api.q}=${encodeURIComponent(query)}`, { timeout: 12000 })
+      const raw = r.data?.results || r.data?.data || r.data?.result || []
+      const items = Array.isArray(raw) ? raw : (raw.videos || [])
+      if (items.length) {
+        const v = items[0]
+        return {
+          title:     v.title,
+          url:       v.url || v.link,
+          duration:  v.duration?.timestamp || v.duration?.seconds || v.duration || '?',
+          author:    v.author?.name || v.channel?.name || v.channel || '',
+          thumbnail: v.thumbnail || v.image
+        }
+      }
+    } catch {}
+  }
+  return null
+}
+
+async function ytAudioDl(url) {
+  const apis = [
+    `https://apis.davidcyriltech.my.id/youtube/mp3?url=${encodeURIComponent(url)}`,
+    `https://api.giftedtech.web.id/api/download/dlmp3?apikey=gifted&url=${encodeURIComponent(url)}`,
+    `https://api.dreaded.site/api/ytdl/audio?url=${encodeURIComponent(url)}`,
+  ]
+  for (const apiUrl of apis) {
+    try {
+      const r = await axios.get(apiUrl, { timeout: 30000 })
+      const dlUrl = r.data?.download_url || r.data?.url || r.data?.result?.download_url
+        || r.data?.result?.url || r.data?.audio
+      if (dlUrl) return dlUrl
+    } catch {}
+  }
+  return null
+}
+
 module.exports = [
 
   // ─── PLAY ────────────────────────────────────────────────────────────────
@@ -19,33 +63,15 @@ module.exports = [
         let videoInfo = null
 
         if (isUrl) {
-          let vidId = ''
-          try {
-            vidId = query.includes('youtu.be/')
-              ? query.split('youtu.be/')[1].split(/[?&]/)[0]
-              : new URL(query).searchParams.get('v') || ''
-          } catch {}
-          if (!vidId) return reply(sock, msg, '❌ URL YouTube invalide.')
-          videoInfo = { url: query, videoId: vidId, title: 'YouTube Video', duration: '?', author: '' }
+          videoInfo = { url: query, title: 'YouTube Video', duration: '?', author: '' }
           try {
             const o = await axios.get(`https://www.youtube.com/oembed?url=${encodeURIComponent(query)}&format=json`, { timeout: 5000 })
             videoInfo.title  = o.data?.title || videoInfo.title
             videoInfo.author = o.data?.author_name || ''
           } catch {}
         } else {
-          const searchRes = await axios.get(
-            `https://apis.davidcyriltech.my.id/youtube/search?query=${encodeURIComponent(query)}`,
-            { timeout: 15000 }
-          ).catch(() => null)
-          const video = searchRes?.data?.results?.[0]
-          if (!video) return reply(sock, msg, '❌ Aucun résultat trouvé.')
-          videoInfo = {
-            url:       video.url,
-            title:     video.title,
-            duration:  video.duration || '?',
-            author:    video.author?.name || video.channel || '',
-            thumbnail: video.thumbnail
-          }
+          videoInfo = await ytSearch(query)
+          if (!videoInfo) return reply(sock, msg, '❌ Aucun résultat trouvé. Réessaie avec d\'autres mots-clés.')
         }
 
         const infoText =
@@ -59,21 +85,15 @@ module.exports = [
           try {
             const tRes = await axios.get(videoInfo.thumbnail, { responseType: 'arraybuffer', timeout: 8000 })
             await sock.sendMessage(from, { image: Buffer.from(tRes.data), caption: infoText }, { quoted: msg })
-          } catch {
-            await reply(sock, msg, infoText)
-          }
+          } catch { await reply(sock, msg, infoText) }
         } else {
           await reply(sock, msg, infoText)
         }
 
         await react(sock, msg, '⬇️')
 
-        const dlRes = await axios.get(
-          `https://apis.davidcyriltech.my.id/youtube/mp3?url=${encodeURIComponent(videoInfo.url)}`,
-          { timeout: 30000 }
-        )
-        const dlUrl = dlRes.data?.download_url || dlRes.data?.url || dlRes.data?.result?.download_url
-        if (!dlUrl) return reply(sock, msg, '❌ Impossible de récupérer l\'audio. Réessaie ou utilise un autre titre.')
+        const dlUrl = await ytAudioDl(videoInfo.url)
+        if (!dlUrl) return reply(sock, msg, '❌ Impossible de récupérer l\'audio. Service temporairement indisponible.')
 
         const audioRes = await axios.get(dlUrl, { responseType: 'arraybuffer', timeout: 60000 })
         await sock.sendMessage(from, {
