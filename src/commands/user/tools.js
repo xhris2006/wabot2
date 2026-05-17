@@ -35,7 +35,7 @@ module.exports = {
       const target = targetImage(msg, quoted)
       if (!target) return reply('Reponds a une image contenant un QR code.')
       try {
-        const Jimp = require('jimp')
+        const { Jimp } = require('jimp')
         const QrCode = require('qrcode-reader')
         const buf = await downloadMedia(target)
         const image = await Jimp.read(buf)
@@ -49,7 +49,7 @@ module.exports = {
       } catch (e) { reply('Erreur scan: ' + e.message) }
     }
   },
-
+  
   calc: {
     desc: 'Calculatrice avancee',
     aliases: ['calculate', 'math'],
